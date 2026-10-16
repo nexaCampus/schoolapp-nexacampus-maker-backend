@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	// SlugRegex matches 2 to 32 lowercase alphanumeric characters with hyphens,
+	// SlugRegex matches 3 to 32 lowercase alphanumeric characters with hyphens,
 	// starting and ending with an alphanumeric character.
-	SlugRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
+	SlugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$`)
 
 	// ReservedSlugs is a strict blocklist preventing collision with core services.
 	ReservedSlugs = map[string]struct{}{
