@@ -1,3 +1,7 @@
+# NexaCampus SchoolMaker Orchestrator Backend
+
+Autonomous Multi-Tenant School Provisioning & Subdomain Routing Engine.
+
 # NexaCampus School Maker Backend Orchestrator & Tenant Engine
 
 A production-hardened, decoupled dual-engine backend architecture built in **Go (Golang)** and **SQLite (pure Go WAL mode)** for automated multi-tenant school onboarding, cloud infrastructure provisioning, and isolated tenant runtimes.
@@ -169,3 +173,4 @@ docker build -f Dockerfile.tenant -t ghcr.io/nexacampus/school-tenant:latest .
 # Orchestrator
 docker build -f Dockerfile.orchestrator -t ghcr.io/nexacampus/school-orchestrator:latest .
 ```
+
