@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	// SlugRegex matches 4 to 32 lowercase alphanumeric characters with hyphens,
+	// SlugRegex matches 2 to 32 lowercase alphanumeric characters with hyphens,
 	// starting and ending with an alphanumeric character.
-	SlugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,30}[a-z0-9]$`)
+	SlugRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 
 	// ReservedSlugs is a strict blocklist preventing collision with core services.
 	ReservedSlugs = map[string]struct{}{
@@ -41,7 +41,7 @@ var (
 		"www":          {},
 	}
 
-	ErrInvalidSlugFormat = errors.New("invalid slug: must be 4-32 characters, lowercase alphanumeric with optional internal hyphens")
+	ErrInvalidSlugFormat = errors.New("invalid slug: must be 2-32 characters, lowercase alphanumeric with optional internal hyphens")
 	ErrReservedSlug      = errors.New("slug is reserved for platform infrastructure and cannot be claimed")
 	ErrPathTraversal     = errors.New("potential path traversal detected in file operation")
 )
