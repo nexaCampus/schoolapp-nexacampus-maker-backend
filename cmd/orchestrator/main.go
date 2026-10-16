@@ -17,6 +17,7 @@ import (
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/handlers"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/middleware"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/provisioner"
+	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/vercel"
 )
 
 func main() {
@@ -72,6 +73,11 @@ func main() {
 
 	// 8. Construct HTTP Handlers & Routes
 	h := handlers.NewOrchestratorHandler(orch, quotaMgr, db)
+	vercelSvc := vercel.NewDomainService(cfg.VercelToken, cfg.VercelProjectID, cfg.VercelTeamID, cfg.BaseDomain)
+	h.SetVercelService(vercelSvc)
+	h.SetBaseDomain(cfg.BaseDomain)
+	h.SetJWTSecret(cfg.MasterSecretKey)
+
 	mux := http.NewServeMux()
 
 	// Public Health & Quotas
@@ -84,7 +90,7 @@ func main() {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	})
 
-	// Tenant Registration & Lifecycle
+	// Tenant Registration & Lifecycle (Legacy)
 	mux.HandleFunc("/api/v1/tenants/validate-slug", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			h.ValidateSlug(w, r)
@@ -116,6 +122,38 @@ func main() {
 		}
 		http.Error(w, "Not Found", http.StatusNotFound)
 	})
+
+	// =========================================================================
+	// ISSUE 1: Creator Verification & OTP Endpoints
+	// =========================================================================
+	mux.HandleFunc("/api/v1/maker/auth/send-otp", h.MakerSendOTP)
+	mux.HandleFunc("/api/v1/maker/auth/verify-otp", h.MakerVerifyOTP)
+
+	// =========================================================================
+	// ISSUE 2, 3 & 4: School Provisioning, Registry & 15-Module Configuration
+	// =========================================================================
+	mux.HandleFunc("/api/v1/maker/provision", h.MakerProvisionSchool)
+	mux.HandleFunc("/api/v1/schools", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.MakerProvisionSchool(w, r)
+			return
+		}
+		if r.Method == http.MethodGet {
+			h.ListSchools(w, r)
+			return
+		}
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	})
+	mux.HandleFunc("/api/v1/schools/search", h.SearchSchools)
+	mux.HandleFunc("/api/v1/schools/check-slug", h.CheckSlug)
+	mux.HandleFunc("/api/v1/schools/", h.GetSchoolOrSubroute)
+	mux.HandleFunc("/api/v1/maker/my-schools", h.GetMySchools)
+
+	// =========================================================================
+	// PART 3: Role-Segregated Authentication (Student vs Admin)
+	// =========================================================================
+	mux.HandleFunc("/api/v1/auth/student-login", h.StudentLogin)
+	mux.HandleFunc("/api/v1/auth/admin-login", h.AdminLogin)
 
 	// 9. Build Middleware Chain (Recoverer, BodyLimit, RateLimiter, CORS, SecurityHeaders)
 	rateLimiter := middleware.NewIPRateLimiter(cfg.RateLimitReqSec, cfg.RateLimitBurst)
