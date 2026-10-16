@@ -28,6 +28,8 @@ type OrchestratorConfig struct {
 	BaseDomain         string
 	TenantImage        string
 	Environment        string
+	TursoDatabaseURL   string
+	TursoAuthToken     string
 	RateLimitReqSec    float64
 	RateLimitBurst     int
 }
@@ -52,6 +54,8 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		BaseDomain:         getEnv("BASE_DOMAIN", "nexacampus.tech"),
 		TenantImage:        getEnv("TENANT_IMAGE", "ghcr.io/nexacampus/school-tenant:latest"),
 		Environment:        getEnv("ENV", "production"),
+		TursoDatabaseURL:   strings.TrimSpace(os.Getenv("TURSO_DATABASE_URL")),
+		TursoAuthToken:     strings.TrimSpace(os.Getenv("TURSO_AUTH_TOKEN")),
 		RateLimitReqSec:    getEnvFloat("RATE_LIMIT_REQ_SEC", 20.0),
 		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", 40),
 	}
