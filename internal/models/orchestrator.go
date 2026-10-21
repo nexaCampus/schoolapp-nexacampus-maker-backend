@@ -184,15 +184,17 @@ type CheckSlugResponse struct {
 }
 
 type UpdateSchoolRequest struct {
-	SchoolName       *string         `json:"school_name,omitempty"`
-	TeacherCount     *string         `json:"teacher_count,omitempty"`
-	AffiliationBoard *string         `json:"affiliation_board,omitempty"`
-	EnrolledScholars *string         `json:"enrolled_scholars,omitempty"`
-	City             *string         `json:"city,omitempty"`
-	StateTerritory   *string         `json:"state_territory,omitempty"`
-	SchoolMotto      *string         `json:"school_motto,omitempty"`
-	ActiveModules    map[string]bool `json:"active_modules,omitempty"`
-	ThemeColor       *string         `json:"theme_color,omitempty"`
+	SchoolName         *string         `json:"school_name,omitempty"`
+	CreatorName        *string         `json:"creator_name,omitempty"`
+	LeadershipPosition *string         `json:"leadership_position,omitempty"`
+	TeacherCount       *string         `json:"teacher_count,omitempty"`
+	AffiliationBoard   *string         `json:"affiliation_board,omitempty"`
+	EnrolledScholars   *string         `json:"enrolled_scholars,omitempty"`
+	City               *string         `json:"city,omitempty"`
+	StateTerritory     *string         `json:"state_territory,omitempty"`
+	SchoolMotto        *string         `json:"school_motto,omitempty"`
+	ActiveModules      map[string]bool `json:"active_modules,omitempty"`
+	ThemeColor         *string         `json:"theme_color,omitempty"`
 }
 
 type StudentLoginRequest struct {

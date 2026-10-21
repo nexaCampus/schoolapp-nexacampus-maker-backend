@@ -655,15 +655,42 @@ func (h *OrchestratorHandler) UpdateSchool(w http.ResponseWriter, r *http.Reques
 		currentModules = normalizeActiveModules(currentModules)
 	}
 
-	updatedModulesJSON, _ := json.Marshal(currentModules)
+	updatedModulesJSON, err := json.Marshal(currentModules)
+	if err != nil {
+		sendJSONError(w, http.StatusInternalServerError, "serializing module map: "+err.Error())
+		return
+	}
 	now := time.Now().UTC()
+
+	// Only the fields that were actually supplied are written, so a partial
+	// patch never wipes unrelated institutional data.
+	setClauses := []string{"active_modules = ?", "updated_at = ?"}
+	args := []interface{}{string(updatedModulesJSON), now}
+
+	appendIfSet := func(column string, value *string) {
+		if value != nil {
+			setClauses = append(setClauses, column+" = ?")
+			args = append(args, *value)
+		}
+	}
+
+	appendIfSet("school_name", req.SchoolName)
+	appendIfSet("creator_name", req.CreatorName)
+	appendIfSet("leadership_position", req.LeadershipPosition)
+	appendIfSet("teacher_count", req.TeacherCount)
+	appendIfSet("affiliation_board", req.AffiliationBoard)
+	appendIfSet("enrolled_scholars", req.EnrolledScholars)
+	appendIfSet("city", req.City)
+	appendIfSet("state_territory", req.StateTerritory)
+	appendIfSet("school_motto", req.SchoolMotto)
+	appendIfSet("theme_color", req.ThemeColor)
+
+	args = append(args, slug)
 
 	_, err = h.db.ExecContext(
 		r.Context(),
-		`UPDATE schools SET active_modules = ?, updated_at = ? WHERE subdomain_slug = ?`,
-		string(updatedModulesJSON),
-		now,
-		slug,
+		`UPDATE schools SET `+strings.Join(setClauses, ", ")+` WHERE subdomain_slug = ?`,
+		args...,
 	)
 	if err != nil {
 		sendJSONError(w, http.StatusInternalServerError, "updating school: "+err.Error())
