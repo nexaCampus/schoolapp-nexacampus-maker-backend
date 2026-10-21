@@ -27,6 +27,7 @@ type OrchestratorHandler struct {
 	vercelService *vercel.DomainService
 	baseDomain    string
 	jwtSecret     string
+	environment   string
 	startTime     time.Time
 }
 
@@ -301,9 +302,13 @@ func (h *OrchestratorHandler) MakerVerifyOTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Verify code: accept stored match OR universal fallback 123456
-	isValid := (err == nil && storedOTP == inputOTP && time.Now().UTC().Before(expiresAt)) || inputOTP == "123456"
-	if !isValid {
+	// Verify the code: it must match the stored OTP and must not be expired.
+	// There is no universal fallback code.
+	if err != nil || storedOTP == "" || storedOTP != inputOTP {
+		sendJSONError(w, http.StatusUnauthorized, "invalid or expired verification code")
+		return
+	}
+	if !time.Now().UTC().Before(expiresAt) {
 		sendJSONError(w, http.StatusUnauthorized, "invalid or expired verification code")
 		return
 	}
