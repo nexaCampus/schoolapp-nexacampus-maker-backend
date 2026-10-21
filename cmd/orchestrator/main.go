@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,9 +13,15 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/config"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/database"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/deployer"
+	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/grpcapi"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/handlers"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/middleware"
 	"github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/provisioner"
@@ -30,7 +38,8 @@ func main() {
 	}
 
 	// 2. Open Master SQLite database with pure Go driver in WAL mode
-	db, err := database.OpenSQLite(cfg.MasterDBPath)
+	//    (Turso Cloud SQLite is the primary store when configured).
+	db, err := database.OpenWithTurso(cfg.MasterDBPath, cfg.TursoDatabaseURL, cfg.TursoAuthToken)
 	if err != nil {
 		log.Fatalf("Fatal master database connection failure: %v", err)
 	}
@@ -41,6 +50,13 @@ func main() {
 		log.Fatalf("Fatal master schema migration failure: %v", err)
 	}
 	log.Println("[Database] Master SQLite catalog migrated successfully.")
+
+	// 3b. Reconcile stored tenant URLs with the canonical subdomain form
+	if updated, err := database.ReconcileSchoolDomains(db, cfg.BaseDomain, cfg.AppBaseDomain); err != nil {
+		log.Printf("[Database] Warning: tenant URL reconciliation failed: %v", err)
+	} else if updated > 0 {
+		log.Printf("[Database] %d tenant record(s) now point at https://<slug>.%s", updated, cfg.AppBaseDomain)
+	}
 
 	// 4. Initialize Quota Manager (Single-use Free Tier gatekeeper)
 	quotaMgr := provisioner.NewQuotaManager(db)
@@ -73,9 +89,10 @@ func main() {
 
 	// 8. Construct HTTP Handlers & Routes
 	h := handlers.NewOrchestratorHandler(orch, quotaMgr, db)
-	vercelSvc := vercel.NewDomainService(cfg.VercelToken, cfg.VercelProjectID, cfg.VercelTeamID, cfg.BaseDomain)
+	vercelSvc := vercel.NewDomainService(cfg.VercelToken, cfg.VercelProjectID, cfg.VercelTeamID, cfg.BaseDomain, cfg.AppBaseDomain)
 	h.SetVercelService(vercelSvc)
 	h.SetBaseDomain(cfg.BaseDomain)
+	h.SetAppBaseDomain(cfg.AppBaseDomain)
 	h.SetJWTSecret(cfg.MasterSecretKey)
 	h.SetEnvironment(cfg.Environment)
 
@@ -129,6 +146,7 @@ func main() {
 	// =========================================================================
 	mux.HandleFunc("/api/v1/maker/auth/send-otp", h.MakerSendOTP)
 	mux.HandleFunc("/api/v1/maker/auth/verify-otp", h.MakerVerifyOTP)
+	mux.HandleFunc("/api/v1/maker/auth/validate-token", h.MakerValidateCreatorToken)
 
 	// =========================================================================
 	// ISSUE 2, 3 & 4: School Provisioning, Registry & 15-Module Configuration
@@ -184,6 +202,25 @@ func main() {
 	shutdownSignal := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignal, os.Interrupt, syscall.SIGTERM)
 
+	// 12. gRPC data-transfer service (tenant catalogue over protobuf)
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcAuthInterceptor(cfg.MasterSecretKey)),
+	)
+	grpcapi.RegisterSchoolServiceServer(grpcServer, grpcapi.NewServer(db, cfg.BaseDomain, cfg.AppBaseDomain))
+	grpcapi.RegisterHealthServiceServer(grpcServer, grpcapi.NewServer(db, cfg.BaseDomain, cfg.AppBaseDomain))
+
+	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+	if err != nil {
+		log.Printf("[gRPC] Warning: could not listen on :%s (%v) - continuing with REST only", cfg.GRPCPort, err)
+	} else {
+		go func() {
+			log.Printf("[NexaCampus Orchestrator] gRPC listening on 0.0.0.0:%s", cfg.GRPCPort)
+			if err := grpcServer.Serve(grpcListener); err != nil {
+				log.Printf("[gRPC] Server error: %v", err)
+			}
+		}()
+	}
+
 	go func() {
 		log.Printf("[NexaCampus Orchestrator] Listening on http://0.0.0.0:%s", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -201,5 +238,27 @@ func main() {
 		log.Printf("Server shutdown forced: %v", err)
 	}
 
+	grpcServer.GracefulStop()
+
 	log.Println("[NexaCampus Orchestrator] Server exited cleanly.")
+}
+
+// grpcAuthInterceptor rejects unauthenticated gRPC calls unless the caller
+// presents the shared master secret. A missing master secret disables the
+// check (development convenience), matching the REST policy.
+func grpcAuthInterceptor(masterSecret string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if masterSecret == "" {
+			return handler(ctx, req)
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "missing metadata")
+		}
+		values := md.Get("x-master-secret")
+		if len(values) == 0 || subtle.ConstantTimeCompare([]byte(values[0]), []byte(masterSecret)) != 1 {
+			return nil, status.Error(codes.Unauthenticated, "invalid master secret")
+		}
+		return handler(ctx, req)
+	}
 }

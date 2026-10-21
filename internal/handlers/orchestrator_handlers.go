@@ -26,6 +26,7 @@ type OrchestratorHandler struct {
 	db            *sql.DB
 	vercelService *vercel.DomainService
 	baseDomain    string
+	appBaseDomain string
 	jwtSecret     string
 	environment   string
 	startTime     time.Time
@@ -41,8 +42,9 @@ func NewOrchestratorHandler(
 		orchestrator:  orch,
 		quotaManager:  quota,
 		db:            db,
-		vercelService: vercel.NewDomainService("", "", "", "nexacampus.tech"),
+		vercelService: vercel.NewDomainService("", "", "", "nexacampus.tech", "school-webapp-self.vercel.app"),
 		baseDomain:    "nexacampus.tech",
+		appBaseDomain: "school-webapp-self.vercel.app",
 		startTime:     time.Now().UTC(),
 	}
 }
@@ -53,6 +55,38 @@ func (h *OrchestratorHandler) SetVercelService(v *vercel.DomainService) {
 
 func (h *OrchestratorHandler) SetBaseDomain(domain string) {
 	h.baseDomain = domain
+}
+
+// SetAppBaseDomain records the host that serves the multi-tenant webapp. Every
+// tenant is addressed as <slug>.<appBaseDomain>.
+func (h *OrchestratorHandler) SetAppBaseDomain(domain string) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return
+	}
+	h.appBaseDomain = domain
+}
+
+// canonicalDomains returns the canonical tenant URLs for a slug.
+func (h *OrchestratorHandler) canonicalDomains(slug string) (appDomain string, appAdminDomain string) {
+	clean := strings.ToLower(strings.TrimSpace(slug))
+	if clean == "" {
+		return "", ""
+	}
+	return fmt.Sprintf("https://%s.%s", clean, h.appBaseDomain),
+		fmt.Sprintf("https://%s.admin.%s", clean, h.appBaseDomain)
+}
+
+// applyCanonicalDomains stamps the canonical tenant URLs onto a school record.
+// The stored vercel_fallback_domain may still hold a legacy path-style value on
+// rows that were written before the subdomain migration, so it is normalised here.
+func (h *OrchestratorHandler) applyCanonicalDomains(s *models.School) {
+	appDomain, appAdminDomain := h.canonicalDomains(s.SubdomainSlug)
+	s.AppDomain = appDomain
+	s.AppAdminDomain = appAdminDomain
+	if appDomain != "" {
+		s.VercelFallbackDomain = appDomain
+	}
 }
 
 func (h *OrchestratorHandler) SetJWTSecret(secret string) {
@@ -293,6 +327,66 @@ func (h *OrchestratorHandler) MakerSendOTP(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// MakerValidateCreatorToken handles POST /api/v1/maker/auth/validate-token.
+// The webapp uses it to verify a SchoolMaker creator session before it asks
+// the Next.js server for a signed session cookie.
+func (h *OrchestratorHandler) MakerValidateCreatorToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Phone string `json:"phone"`
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, http.StatusBadRequest, "invalid json payload")
+		return
+	}
+
+	cleanPhone := strings.TrimSpace(req.Phone)
+	token := strings.TrimSpace(req.Token)
+	if cleanPhone == "" || token == "" {
+		sendJSONError(w, http.StatusBadRequest, "phone and token are required")
+		return
+	}
+
+	var creatorName string
+	var verified int
+	var expiresAt time.Time
+	err := h.db.QueryRowContext(
+		r.Context(),
+		`SELECT creator_name, verified, expires_at FROM creator_sessions WHERE phone = ? AND token = ?`,
+		cleanPhone, token,
+	).Scan(&creatorName, &verified, &expiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			sendJSONError(w, http.StatusUnauthorized, "unknown creator session")
+			return
+		}
+		sendJSONError(w, http.StatusInternalServerError, "database error: "+err.Error())
+		return
+	}
+
+	if verified != 1 {
+		sendJSONError(w, http.StatusUnauthorized, "creator session is not verified")
+		return
+	}
+	if !expiresAt.IsZero() && !time.Now().UTC().Before(expiresAt) {
+		sendJSONError(w, http.StatusUnauthorized, "creator session has expired")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"creator_name": creatorName,
+		"phone":        cleanPhone,
+		"verified_at":  expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
 // MakerVerifyOTP handles POST /api/v1/maker/auth/verify-otp
 func (h *OrchestratorHandler) MakerVerifyOTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -436,7 +530,7 @@ func (h *OrchestratorHandler) MakerProvisionSchool(w http.ResponseWriter, r *htt
 
 	// Step 3: Call Vercel Domain Service for custom subdomains + Vercel aliases
 	if h.vercelService == nil {
-		h.vercelService = vercel.NewDomainService("", "", "", h.baseDomain)
+		h.vercelService = vercel.NewDomainService("", "", "", h.baseDomain, h.appBaseDomain)
 	}
 
 	domainResult, domainErr := h.vercelService.ProvisionSubdomains(r.Context(), slug)
@@ -510,7 +604,7 @@ func (h *OrchestratorHandler) MakerProvisionSchool(w http.ResponseWriter, r *htt
 		string(modulesJSON),
 		domainResult.StudentCustomDomain,
 		domainResult.AdminCustomDomain,
-		domainResult.PathFallbackStudent,
+		domainResult.AppDomain,
 		themeColor,
 		now,
 		now,
@@ -536,7 +630,9 @@ func (h *OrchestratorHandler) MakerProvisionSchool(w http.ResponseWriter, r *htt
 		ActiveModules:        normalizedModules,
 		StudentDomain:        domainResult.StudentCustomDomain,
 		AdminDomain:          domainResult.AdminCustomDomain,
-		VercelFallbackDomain: domainResult.VercelAppDomain,
+		VercelFallbackDomain: domainResult.AppDomain,
+		AppDomain:            domainResult.AppDomain,
+		AppAdminDomain:       domainResult.AppAdminDomain,
 		ProvisioningStatus:   "active",
 		ThemeColor:           themeColor,
 		CreatedAt:            now,
@@ -548,7 +644,9 @@ func (h *OrchestratorHandler) MakerProvisionSchool(w http.ResponseWriter, r *htt
 		School:               schoolRecord,
 		StudentDomain:        domainResult.StudentCustomDomain,
 		AdminDomain:          domainResult.AdminCustomDomain,
-		VercelFallbackDomain: domainResult.VercelAppDomain,
+		VercelFallbackDomain: domainResult.AppDomain,
+		AppDomain:            domainResult.AppDomain,
+		AppAdminDomain:       domainResult.AppAdminDomain,
 		PathFallbackStudent:  domainResult.PathFallbackStudent,
 		PathFallbackAdmin:    domainResult.PathFallbackAdmin,
 		StepsCompleted:       steps,
@@ -595,6 +693,7 @@ func (h *OrchestratorHandler) ListSchools(w http.ResponseWriter, r *http.Request
 		} else {
 			s.ActiveModules = make(map[string]bool)
 		}
+		h.applyCanonicalDomains(&s)
 		schools = append(schools, s)
 	}
 
@@ -672,6 +771,7 @@ func (h *OrchestratorHandler) GetSchool(w http.ResponseWriter, r *http.Request, 
 	} else {
 		s.ActiveModules = make(map[string]bool)
 	}
+	h.applyCanonicalDomains(&s)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s)
@@ -804,6 +904,7 @@ func (h *OrchestratorHandler) SearchSchools(w http.ResponseWriter, r *http.Reque
 		} else {
 			s.ActiveModules = make(map[string]bool)
 		}
+		h.applyCanonicalDomains(&s)
 		schools = append(schools, s)
 	}
 
@@ -855,8 +956,11 @@ func (h *OrchestratorHandler) CheckSlug(w http.ResponseWriter, r *http.Request) 
 
 	resp.Urls.StudentCustom = fmt.Sprintf("https://%s.%s", slug, base)
 	resp.Urls.AdminCustom = fmt.Sprintf("https://%s.admin.%s", slug, base)
-	resp.Urls.VercelFallback = fmt.Sprintf("https://%s-nexacampus.vercel.app", slug)
-	resp.Urls.PathFallback = fmt.Sprintf("https://school-webapp-self.vercel.app/school/%s", slug)
+	appDomain, appAdminDomain := h.canonicalDomains(slug)
+	resp.Urls.AppDomain = appDomain
+	resp.Urls.AppAdminDomain = appAdminDomain
+	resp.Urls.VercelFallback = appDomain
+	resp.Urls.PathFallback = fmt.Sprintf("https://%s/school/%s", h.appBaseDomain, slug)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -910,6 +1014,7 @@ func (h *OrchestratorHandler) GetMySchools(w http.ResponseWriter, r *http.Reques
 		} else {
 			s.ActiveModules = make(map[string]bool)
 		}
+		h.applyCanonicalDomains(&s)
 		schools = append(schools, s)
 	}
 
@@ -961,6 +1066,7 @@ func (h *OrchestratorHandler) StudentLogin(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_ = json.Unmarshal([]byte(modulesRaw), &school.ActiveModules)
+	h.applyCanonicalDomains(&school)
 
 	// Build authenticated student profile
 	identifier := strings.TrimSpace(req.AdmissionNumber)
@@ -1041,6 +1147,7 @@ func (h *OrchestratorHandler) AdminLogin(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = json.Unmarshal([]byte(modulesRaw), &school.ActiveModules)
+	h.applyCanonicalDomains(&school)
 
 	token, _ := security.GenerateSecureToken(32)
 

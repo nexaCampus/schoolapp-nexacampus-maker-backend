@@ -136,10 +136,14 @@ type School struct {
 	StudentDomain        string          `json:"student_domain"`
 	AdminDomain          string          `json:"admin_domain"`
 	VercelFallbackDomain string          `json:"vercel_fallback_domain"`
-	ProvisioningStatus   string          `json:"provisioning_status"`
-	ThemeColor           string          `json:"theme_color"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
+	// AppDomain is the canonical tenant portal: https://<slug>.<APP_BASE_DOMAIN>
+	AppDomain string `json:"app_domain"`
+	// AppAdminDomain is the canonical tenant admin portal.
+	AppAdminDomain    string          `json:"app_admin_domain"`
+	ProvisioningStatus string          `json:"provisioning_status"`
+	ThemeColor         string          `json:"theme_color"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 type CreateSchoolRequest struct {
@@ -164,6 +168,10 @@ type CreateSchoolResponse struct {
 	StudentDomain        string   `json:"student_domain"`
 	AdminDomain          string   `json:"admin_domain"`
 	VercelFallbackDomain string   `json:"vercel_fallback_domain"`
+	// AppDomain is the canonical tenant portal: https://<slug>.<APP_BASE_DOMAIN>
+	AppDomain string `json:"app_domain"`
+	// AppAdminDomain is the canonical tenant admin portal.
+	AppAdminDomain    string   `json:"app_admin_domain"`
 	PathFallbackStudent  string   `json:"path_fallback_student"`
 	PathFallbackAdmin    string   `json:"path_fallback_admin"`
 	StepsCompleted       []string `json:"steps_completed"`
@@ -179,7 +187,10 @@ type CheckSlugResponse struct {
 		StudentCustom  string `json:"student_custom"`
 		AdminCustom    string `json:"admin_custom"`
 		VercelFallback string `json:"vercel_fallback"`
-		PathFallback   string `json:"path_fallback"`
+		// AppDomain is the canonical tenant portal: https://<slug>.<APP_BASE_DOMAIN>
+		AppDomain    string `json:"app_domain"`
+		AppAdminDomain string `json:"app_admin_domain"`
+		PathFallback string `json:"path_fallback"`
 	} `json:"urls"`
 }
 

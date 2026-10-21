@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package nexacampus.v1;
+
+option go_package = "github.com/nexaCampus/schoolapp-nexacampus-maker-backend/internal/grpcapi;grpcapi";
+
+// NexaCampus control-plane service.
+//
+// The REST API stays the public contract for the webapp; gRPC is the
+// high-throughput data-transfer path used by internal services (and by the
+// webapp's server components) to move tenant catalogues and student records
+// without JSON round-trips.
+service SchoolService {
+  // Returns the full tenant catalogue.
+  rpc ListSchools(ListSchoolsRequest) returns (ListSchoolsResponse);
+
+  // Returns a single tenant record.
+  rpc GetSchool(GetSchoolRequest) returns (GetSchoolResponse);
+
+  // Returns the tenant record bound to a creator phone number.
+  rpc GetSchoolByCreator(GetSchoolByCreatorRequest) returns (GetSchoolResponse);
+}
+
+service HealthService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message School {
+  string id = 1;
+  string creator_phone = 2;
+  string creator_name = 3;
+  string leadership_position = 4;
+  string school_name = 5;
+  string teacher_count = 6;
+  string affiliation_board = 7;
+  string enrolled_scholars = 8;
+  string city = 9;
+  string state_territory = 10;
+  string subdomain_slug = 11;
+  string school_motto = 12;
+  map<string, bool> active_modules = 13;
+  // DNS-bound student domain, e.g. https://greenwood.nexacampus.tech
+  string student_domain = 14;
+  // DNS-bound admin domain, e.g. https://greenwood.admin.nexacampus.tech
+  string admin_domain = 15;
+  // Canonical portal URL — subdomain of the webapp host.
+  string app_domain = 16;
+  // Canonical admin portal URL — subdomain of the webapp host.
+  string app_admin_domain = 17;
+  // Legacy path fallback, kept for deployments without wildcard DNS.
+  string path_fallback = 18;
+  string provisioning_status = 19;
+  string theme_color = 20;
+  string created_at = 21;
+  string updated_at = 22;
+}
+
+message ListSchoolsRequest {
+  // Optional board filter (CBSE, ICSE, CISCE, ...).
+  string board = 1;
+  // Optional city filter.
+  string city = 2;
+  // Maximum number of records to return (0 = server default).
+  int32 limit = 3;
+}
+
+message ListSchoolsResponse {
+  repeated School schools = 1;
+  int32 total = 2;
+}
+
+message GetSchoolRequest {
+  string subdomain_slug = 1;
+}
+
+message GetSchoolByCreatorRequest {
+  string creator_phone = 1;
+}
+
+message GetSchoolResponse {
+  School school = 1;
+  bool found = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string status = 2;
+  string database = 3;
+  string app_base_domain = 4;
+  int64 uptime_seconds = 5;
+}
