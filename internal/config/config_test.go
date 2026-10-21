@@ -22,12 +22,41 @@ func TestLoadOrchestratorConfig_FallbackMasterSecretKey(t *testing.T) {
 		t.Fatalf("expected nil error with resilient fallback, got: %v", err)
 	}
 
-	expectedFallback := "nexacampus_secret_master_key_super_secure_32bytes_long"
-	if cfg.MasterSecretKey != expectedFallback {
-		t.Errorf("expected fallback key %q, got %q", expectedFallback, cfg.MasterSecretKey)
+	const wellKnownFallback = "nexacampus_secret_master_key_super_secure_32bytes_long"
+	if cfg.MasterSecretKey == wellKnownFallback {
+		t.Errorf("production must never fall back to the well-known shared secret")
 	}
 	if len(cfg.MasterSecretKey) < 32 {
 		t.Errorf("expected fallback key length >= 32, got %d", len(cfg.MasterSecretKey))
+	}
+
+	// Two consecutive loads must not produce the same ephemeral secret.
+	second, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatalf("expected nil error on second load, got: %v", err)
+	}
+	if second.MasterSecretKey == cfg.MasterSecretKey {
+		t.Errorf("expected a fresh random ephemeral secret on each load")
+	}
+}
+
+func TestLoadOrchestratorConfig_DevelopmentFallbackIsStable(t *testing.T) {
+	origKey := os.Getenv("MASTER_SECRET_KEY")
+	origEnv := os.Getenv("ENV")
+	defer func() {
+		_ = os.Setenv("MASTER_SECRET_KEY", origKey)
+		_ = os.Setenv("ENV", origEnv)
+	}()
+
+	_ = os.Unsetenv("MASTER_SECRET_KEY")
+	_ = os.Setenv("ENV", "development")
+
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+	if cfg.MasterSecretKey != "nexacampus_secret_master_key_super_secure_32bytes_long" {
+		t.Errorf("expected stable development fallback key, got %q", cfg.MasterSecretKey)
 	}
 }
 
