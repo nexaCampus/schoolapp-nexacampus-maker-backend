@@ -786,6 +786,11 @@ func (h *OrchestratorHandler) GetMySchools(w http.ResponseWriter, r *http.Reques
 	}
 
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+	if phone == "" {
+		// An empty pattern would match every row in the table.
+		sendJSONError(w, http.StatusBadRequest, "creator phone number is required")
+		return
+	}
 	query := `
 		SELECT id, creator_phone, creator_name, leadership_position,
 		       school_name, teacher_count, affiliation_board, enrolled_scholars,
