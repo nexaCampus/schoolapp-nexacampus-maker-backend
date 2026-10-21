@@ -23,6 +23,13 @@ PRAGMA temp_store = MEMORY;
 PRAGMA foreign_keys = ON;
 `
 
+// remotePragmas are the subset of pragmas that are safe on a remote libSQL
+// (Turso) cluster. Local-only pragmas such as journal_mode are not supported.
+const remotePragmas = `
+PRAGMA busy_timeout = 5000;
+PRAGMA foreign_keys = ON;
+`
+
 // OpenSQLite opens a database connection.
 // If TURSO_DATABASE_URL and TURSO_AUTH_TOKEN environment variables are provided,
 // it connects to the remote, persistent Turso Cloud SQLite (libSQL) cluster.
@@ -53,6 +60,12 @@ func OpenSQLite(dbPath string) (*sql.DB, error) {
 		if err := db.PingContext(ctx); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("pinging turso cloud database (%s): %w", tursoURL, err)
+		}
+
+		// Apply the same connection pragmas used by the local driver. Without
+		// busy_timeout a concurrent write can fail immediately with SQLITE_BUSY.
+		if _, err := db.Exec(remotePragmas); err != nil {
+			log.Printf("[Database] Notice: could not apply pragmas to the libSQL connection: %v", err)
 		}
 
 		log.Printf("[Database] ✓ Successfully verified active connection to Turso Cloud SQLite (%s)\n", tursoURL)
