@@ -77,6 +77,7 @@ func main() {
 	h.SetVercelService(vercelSvc)
 	h.SetBaseDomain(cfg.BaseDomain)
 	h.SetJWTSecret(cfg.MasterSecretKey)
+	h.SetEnvironment(cfg.Environment)
 
 	mux := http.NewServeMux()
 
