@@ -59,6 +59,18 @@ func (h *OrchestratorHandler) SetJWTSecret(secret string) {
 	h.jwtSecret = secret
 }
 
+// SetEnvironment records the deployment environment ("production", "development", ...).
+func (h *OrchestratorHandler) SetEnvironment(env string) {
+	h.environment = strings.ToLower(strings.TrimSpace(env))
+}
+
+// isProduction reports whether the orchestrator is running in a production environment.
+// Development conveniences (deterministic OTPs, OTPs echoed in responses) are only
+// enabled outside of production.
+func (h *OrchestratorHandler) isProduction() bool {
+	return h.environment == "" || h.environment == "production" || h.environment == "prod"
+}
+
 // Healthz serves system telemetry and database health.
 func (h *OrchestratorHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
@@ -232,13 +244,19 @@ func (h *OrchestratorHandler) MakerSendOTP(w http.ResponseWriter, r *http.Reques
 		creatorName = "School Administrator"
 	}
 
-	// Generate OTP (deterministic dev fallback for designated test numbers or random 6-digit)
-	otpCode := "123456"
-	if !strings.Contains(cleanPhone, "6289652321") && !strings.Contains(cleanPhone, "9830123456") {
+	// Generate a cryptographically random 6-digit OTP.
+	// Outside production, the two well-known demo numbers keep a deterministic
+	// code so the local Maker flow stays testable without an SMS gateway.
+	otpCode := ""
+	if !h.isProduction() && (strings.Contains(cleanPhone, "6289652321") || strings.Contains(cleanPhone, "9830123456")) {
+		otpCode = "123456"
+	} else {
 		n, err := rand.Int(rand.Reader, big.NewInt(900000))
-		if err == nil {
-			otpCode = fmt.Sprintf("%06d", n.Int64()+100000)
+		if err != nil {
+			sendJSONError(w, http.StatusInternalServerError, "generating verification code: "+err.Error())
+			return
 		}
+		otpCode = fmt.Sprintf("%06d", n.Int64()+100000)
 	}
 
 	now := time.Now().UTC()
@@ -264,7 +282,11 @@ func (h *OrchestratorHandler) MakerSendOTP(w http.ResponseWriter, r *http.Reques
 	resp := models.SendOTPResponse{
 		Success: true,
 		Message: fmt.Sprintf("6-digit verification code sent to %s", cleanPhone),
-		DevOTP:  otpCode, // Surfaces OTP directly in response for fast developer testing
+	}
+	// The code is only echoed back outside production so that local developers can
+	// complete the Maker flow without an SMS gateway. Production never leaks it.
+	if !h.isProduction() {
+		resp.DevOTP = otpCode
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -377,10 +399,28 @@ func (h *OrchestratorHandler) MakerProvisionSchool(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Step 1: Slug uniqueness check (allow updating existing school if same creator or re-provisioning)
+	// Step 1: Slug uniqueness check. A slug may only be (re)provisioned by the
+	// creator that already owns it, otherwise anybody could hijack a school.
 	var existingID string
 	var existingCreator string
-	_ = h.db.QueryRowContext(r.Context(), `SELECT id, creator_phone FROM schools WHERE subdomain_slug = ?`, slug).Scan(&existingID, &existingCreator)
+	lookupErr := h.db.QueryRowContext(r.Context(), `SELECT id, creator_phone FROM schools WHERE subdomain_slug = ?`, slug).Scan(&existingID, &existingCreator)
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		sendJSONError(w, http.StatusInternalServerError, "checking slug availability: "+lookupErr.Error())
+		return
+	}
+
+	if existingID != "" {
+		incomingPhone := strings.TrimSpace(req.CreatorPhone)
+		existingPhone := strings.TrimSpace(existingCreator)
+		if incomingPhone == "" {
+			sendJSONError(w, http.StatusUnauthorized, "creator phone number is required to update an existing school")
+			return
+		}
+		if !phonesMatch(incomingPhone, existingPhone) {
+			sendJSONError(w, http.StatusForbidden, fmt.Sprintf("subdomain '%s' is already claimed by another institution", slug))
+			return
+		}
+	}
 
 	steps := []string{
 		"1. Validating Tenant Slug",
@@ -399,8 +439,20 @@ func (h *OrchestratorHandler) MakerProvisionSchool(w http.ResponseWriter, r *htt
 		h.vercelService = vercel.NewDomainService("", "", "", h.baseDomain)
 	}
 
-	steps = append(steps, "3. Provisioning Vercel Subdomains")
-	domainResult, _ := h.vercelService.ProvisionSubdomains(r.Context(), slug)
+	domainResult, domainErr := h.vercelService.ProvisionSubdomains(r.Context(), slug)
+	if domainResult == nil {
+		sendJSONError(w, http.StatusInternalServerError, "domain provisioning returned no result")
+		return
+	}
+	if domainErr != nil {
+		// The school record is still persisted (it is the source of truth for the
+		// subdomain), but the caller is told that DNS/Vercel attachment failed.
+		steps = append(steps, "3. Domain attachment reported a warning - verify DNS records")
+	} else if len(domainResult.AttachedDomains) > 0 && len(domainResult.Errors) == 0 {
+		steps = append(steps, "3. Provisioning Vercel Subdomains")
+	} else {
+		steps = append(steps, "3. Subdomain URLs generated (custom domain attachment pending)")
+	}
 
 	// Step 4: Generate Student and Admin URLs
 	steps = append(steps, "4. Generating Student & Admin Portal URLs")
@@ -709,6 +761,11 @@ func (h *OrchestratorHandler) SearchSchools(w http.ResponseWriter, r *http.Reque
 	}
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		// An empty pattern would match every row in the table.
+		sendJSONError(w, http.StatusBadRequest, "search query 'q' is required")
+		return
+	}
 	searchPattern := "%" + strings.ToLower(q) + "%"
 
 	query := `
