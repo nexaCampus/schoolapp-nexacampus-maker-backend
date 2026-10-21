@@ -4,7 +4,13 @@ Autonomous Multi-Tenant School Provisioning & Subdomain Routing Engine.
 
 # NexaCampus School Maker Backend Orchestrator & Tenant Engine
 
-A production-hardened, decoupled dual-engine backend architecture built in **Go (Golang)** and **SQLite (pure Go WAL mode)** for automated multi-tenant school onboarding, cloud infrastructure provisioning, and isolated tenant runtimes.
+A production-hardened, decoupled dual-engine backend architecture built in **Go (Golang)** and **Turso Cloud SQLite (libSQL)**, with a pure-Go local SQLite fallback, for automated multi-tenant school onboarding, cloud infrastructure provisioning, and isolated tenant runtimes.
+
+**Storage**: the master tenant catalogue lives in **Turso Cloud SQLite** (`TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`). The embedded schema migrations, the free-tier quota gate and the tenant URL reconciliation all run against that cluster. Local SQLite (`MASTER_DB_PATH`) is only used when no Turso credentials are configured.
+
+**Data transfer**: tenants move over **REST** (public contract) and **gRPC** (`nexacampus.v1.SchoolService` / `HealthService` on `GRPC_PORT`, see `proto/nexacampus/v1/nexacampus.proto`).
+
+**Tenant URLs**: every tenant is addressed as `https://<slug>.<APP_BASE_DOMAIN>` (student) and `https://<slug>.admin.<APP_BASE_DOMAIN>` (admin); the DNS-bound custom domain (`https://<slug>.nexacampus.tech`) and the path fallback (`/school/<slug>`) are kept as alternatives.
 
 ---
 
@@ -123,6 +129,30 @@ schoolapp-nexacampus-maker-backend/
 | `POST` | `/api/v1/tenants/register` | Provisions school backend, binds DNS, returns credentials |
 | `GET` | `/api/v1/tenants` | Lists all registered schools |
 | `GET` | `/api/v1/tenants/:slug` | Details and cloud status for a specific school |
+| `POST` | `/api/v1/maker/auth/send-otp` | Dispatches the creator verification code |
+| `POST` | `/api/v1/maker/auth/verify-otp` | Verifies the code and issues a 256-bit creator token |
+| `POST` | `/api/v1/maker/auth/validate-token` | Validates an existing creator session token |
+| `POST` | `/api/v1/maker/provision` | Provisions a school tenant and its canonical URLs |
+| `GET` | `/api/v1/schools` | Tenant catalogue |
+| `GET` | `/api/v1/schools/search?q=` | Tenant search |
+| `GET` | `/api/v1/schools/check-slug?slug=` | Slug availability plus the tenant URLs |
+| `GET` | `/api/v1/schools/:slug` | A single tenant record |
+| `PATCH` | `/api/v1/schools/:slug` | Updates the profile or the 15-module configuration |
+| `GET` | `/api/v1/maker/my-schools?phone=` | Tenants owned by a creator phone number |
+| `POST` | `/api/v1/auth/student-login` | Roster login by admission number |
+
+### 4.1b. gRPC Data-Transfer Service (`GRPC_PORT`, default 9090)
+
+Protobuf contract: `proto/nexacampus/v1/nexacampus.proto` — generated stubs and the server live in `internal/grpcapi/`.
+
+| RPC | Description |
+|---|---|
+| `nexacampus.v1.SchoolService/ListSchools` | Tenant catalogue, optionally filtered by board or city |
+| `nexacampus.v1.SchoolService/GetSchool` | A single tenant by subdomain slug |
+| `nexacampus.v1.SchoolService/GetSchoolByCreator` | The tenant owned by a creator phone number |
+| `nexacampus.v1.HealthService/Health` | Service, database and configuration health |
+
+Every call must carry the `x-master-secret` metadata header (value of `MASTER_SECRET_KEY`); calls without it are rejected with `Unauthenticated`. The responses carry the same canonical tenant URLs as the REST API (`app_domain`, `app_admin_domain`, `path_fallback`).
 
 ### 4.2. Tenant Runtime Endpoints (School Instance)
 
