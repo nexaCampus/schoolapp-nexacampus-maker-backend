@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -62,8 +64,21 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	}
 
 	if len(cfg.MasterSecretKey) < 32 {
-		log.Println("[Config] Notice: MASTER_SECRET_KEY is not set or under 32 characters in environment; using secure fallback key.")
-		cfg.MasterSecretKey = "nexacampus_secret_master_key_super_secure_32bytes_long"
+		env := strings.ToLower(cfg.Environment)
+		if env == "production" || env == "prod" {
+			// Never fall back to a well-known constant in production. Generate an
+			// ephemeral random secret instead: the service still boots, but the
+			// secret cannot be guessed and will change on the next restart.
+			ephemeral, err := generateEphemeralSecret()
+			if err != nil {
+				return nil, ErrMissingMasterSecret
+			}
+			log.Println("[Config] WARNING: MASTER_SECRET_KEY is not set. Using a randomly generated ephemeral secret for this process only. Set MASTER_SECRET_KEY (>= 32 chars) to keep sessions valid across restarts.")
+			cfg.MasterSecretKey = ephemeral
+		} else {
+			log.Println("[Config] Notice: MASTER_SECRET_KEY is not set or under 32 characters in environment; using secure fallback key.")
+			cfg.MasterSecretKey = "nexacampus_secret_master_key_super_secure_32bytes_long"
+		}
 	}
 
 	return cfg, nil
