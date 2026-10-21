@@ -1015,6 +1015,33 @@ func normalizeActiveModules(input map[string]bool) map[string]bool {
 	return out
 }
 
+// phonesMatch compares two phone numbers ignoring formatting (spaces, dashes,
+// parentheses, country code) by comparing their last 10 significant digits.
+func phonesMatch(a, b string) bool {
+	digits := func(s string) string {
+		var b strings.Builder
+		for _, r := range s {
+			if r >= '0' && r <= '9' {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+
+	da := digits(a)
+	db := digits(b)
+	if da == "" || db == "" {
+		return false
+	}
+	if len(da) > 10 {
+		da = da[len(da)-10:]
+	}
+	if len(db) > 10 {
+		db = db[len(db)-10:]
+	}
+	return da == db
+}
+
 func sendJSONError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
