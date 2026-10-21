@@ -35,8 +35,22 @@ PRAGMA foreign_keys = ON;
 // it connects to the remote, persistent Turso Cloud SQLite (libSQL) cluster.
 // Otherwise, it falls back to local SQLite at dbPath.
 func OpenSQLite(dbPath string) (*sql.DB, error) {
-	tursoURL := strings.TrimSpace(os.Getenv("TURSO_DATABASE_URL"))
-	tursoToken := strings.TrimSpace(os.Getenv("TURSO_AUTH_TOKEN"))
+	return OpenWithTurso(dbPath, "", "")
+}
+
+// OpenWithTurso opens a database connection with explicit Turso credentials.
+// Empty credentials fall back to the environment, and finally to local SQLite.
+// The Turso (libSQL) cluster is the primary store: it is persistent, replicated
+// and shared across every orchestrator replica.
+func OpenWithTurso(dbPath, tursoURL, tursoToken string) (*sql.DB, error) {
+	tursoURL = strings.TrimSpace(tursoURL)
+	tursoToken = strings.TrimSpace(tursoToken)
+	if tursoURL == "" {
+		tursoURL = strings.TrimSpace(os.Getenv("TURSO_DATABASE_URL"))
+	}
+	if tursoToken == "" {
+		tursoToken = strings.TrimSpace(os.Getenv("TURSO_AUTH_TOKEN"))
+	}
 
 	// 1. Remote Turso Cloud SQLite (libSQL)
 	if tursoURL != "" && tursoToken != "" {

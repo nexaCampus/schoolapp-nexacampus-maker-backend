@@ -29,10 +29,15 @@ type OrchestratorConfig struct {
 	HostingerAPIToken  string
 	CloudflareAPIToken string
 	BaseDomain         string
+	// AppBaseDomain is the host that serves the multi-tenant webapp. Every
+	// tenant is addressed as <slug>.<AppBaseDomain> (student) and
+	// <slug>.admin.<AppBaseDomain> (admin).
+	AppBaseDomain      string
 	TenantImage        string
 	Environment        string
 	TursoDatabaseURL   string
 	TursoAuthToken     string
+	GRPCPort           string
 	RateLimitReqSec    float64
 	RateLimitBurst     int
 }
@@ -55,10 +60,12 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		HostingerAPIToken:  strings.TrimSpace(os.Getenv("HOSTINGER_API_TOKEN")),
 		CloudflareAPIToken: strings.TrimSpace(os.Getenv("CLOUDFLARE_API_TOKEN")),
 		BaseDomain:         getEnv("BASE_DOMAIN", "nexacampus.tech"),
+		AppBaseDomain:      getEnv("APP_BASE_DOMAIN", "school-webapp-self.vercel.app"),
 		TenantImage:        getEnv("TENANT_IMAGE", "ghcr.io/nexacampus/school-tenant:latest"),
 		Environment:        getEnv("ENV", "production"),
 		TursoDatabaseURL:   strings.TrimSpace(os.Getenv("TURSO_DATABASE_URL")),
 		TursoAuthToken:     strings.TrimSpace(os.Getenv("TURSO_AUTH_TOKEN")),
+		GRPCPort:           getEnv("GRPC_PORT", "9090"),
 		RateLimitReqSec:    getEnvFloat("RATE_LIMIT_REQ_SEC", 20.0),
 		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", 40),
 	}
