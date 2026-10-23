@@ -98,9 +98,9 @@ INSERT OR IGNORE INTO schools (
     'lcgvm',
     'Tamaso Ma Jyotirgamaya (Knowledge is Light)',
     '{"canteen":true,"bus":true,"bus_transport":true,"library":true,"attendance":true,"diary":true,"homework_diary":true,"exams":true,"exams_reports":true,"timetable":true,"timetable_bell":true,"fees":true,"fee_ledger":true,"hallpass":true,"ehallpass":true,"clubs":true,"clubs_houses":true,"health":true,"medical_infirmary":true,"notices":true,"circulars_notices":true,"ptm":true,"store":true,"store_uniforms":true,"lostfound":true,"lost_found":true}',
-    'https://lcgvm.nexacampus.tech',
-    'https://lcgvm.admin.nexacampus.tech',
-    'https://lcgvm.school-webapp-self.vercel.app',
+    'https://lcgvm.nexacampus.school',
+    'https://lcgvm.admin.nexacampus.school',
+    'https://lcgvm.nexacampus.school',
     'active',
     '#0A192F',
     '2026-01-01 00:00:00',
@@ -127,11 +127,54 @@ INSERT OR IGNORE INTO schools (
     'greenwood',
     'Veritas et Virtus (Truth & Virtue)',
     '{"canteen":true,"bus":true,"bus_transport":true,"library":true,"attendance":true,"diary":true,"homework_diary":true,"exams":true,"exams_reports":true,"timetable":true,"timetable_bell":true,"fees":true,"fee_ledger":true,"hallpass":false,"ehallpass":false,"clubs":true,"clubs_houses":true,"health":true,"medical_infirmary":true,"notices":true,"circulars_notices":true,"ptm":true,"store":false,"store_uniforms":false,"lostfound":false,"lost_found":false}',
-    'https://greenwood.nexacampus.tech',
-    'https://greenwood.admin.nexacampus.tech',
-    'https://greenwood.school-webapp-self.vercel.app',
+    'https://greenwood.nexacampus.school',
+    'https://greenwood.admin.nexacampus.school',
+    'https://greenwood.nexacampus.school',
     'active',
     '#1B382B',
     '2026-01-01 00:00:00',
     '2026-01-01 00:00:00'
 );
+
+
+-- Relational Subdomain Bindings
+CREATE TABLE IF NOT EXISTS school_subdomains (
+    id TEXT PRIMARY KEY,
+    school_id TEXT NOT NULL,
+    subdomain_slug TEXT NOT NULL,
+    domain_type TEXT NOT NULL,
+    full_domain TEXT NOT NULL,
+    target_cname TEXT NOT NULL DEFAULT 'cname.vercel-dns.com',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY(school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_subdomains_slug ON school_subdomains(subdomain_slug);
+CREATE INDEX IF NOT EXISTS idx_subdomains_school_id ON school_subdomains(school_id);
+
+-- Relational School Modules Configuration
+CREATE TABLE IF NOT EXISTS school_modules (
+    id TEXT PRIMARY KEY,
+    school_id TEXT NOT NULL,
+    module_key TEXT NOT NULL,
+    is_enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at DATETIME NOT NULL,
+    UNIQUE(school_id, module_key),
+    FOREIGN KEY(school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_school_modules_school ON school_modules(school_id);
+
+-- Maker Audit Trail
+CREATE TABLE IF NOT EXISTS maker_audit_logs (
+    id TEXT PRIMARY KEY,
+    school_id TEXT,
+    creator_phone TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    created_at DATETIME NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_creator ON maker_audit_logs(creator_phone);
+CREATE INDEX IF NOT EXISTS idx_audit_school ON maker_audit_logs(school_id);

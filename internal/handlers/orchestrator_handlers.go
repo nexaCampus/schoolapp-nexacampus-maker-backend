@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -42,9 +45,9 @@ func NewOrchestratorHandler(
 		orchestrator:  orch,
 		quotaManager:  quota,
 		db:            db,
-		vercelService: vercel.NewDomainService("", "", "", "nexacampus.tech", "school-webapp-self.vercel.app"),
-		baseDomain:    "nexacampus.tech",
-		appBaseDomain: "school-webapp-self.vercel.app",
+		vercelService: vercel.NewDomainService("", "", "", "nexacampus.school", "nexacampus.school"),
+		baseDomain:    "nexacampus.school",
+		appBaseDomain: "nexacampus.school",
 		startTime:     time.Now().UTC(),
 	}
 }
@@ -278,20 +281,13 @@ func (h *OrchestratorHandler) MakerSendOTP(w http.ResponseWriter, r *http.Reques
 		creatorName = "School Administrator"
 	}
 
-	// Generate a cryptographically random 6-digit OTP.
-	// Outside production, the two well-known demo numbers keep a deterministic
-	// code so the local Maker flow stays testable without an SMS gateway.
-	otpCode := ""
-	if !h.isProduction() && (strings.Contains(cleanPhone, "6289652321") || strings.Contains(cleanPhone, "9830123456")) {
-		otpCode = "123456"
-	} else {
-		n, err := rand.Int(rand.Reader, big.NewInt(900000))
-		if err != nil {
-			sendJSONError(w, http.StatusInternalServerError, "generating verification code: "+err.Error())
-			return
-		}
-		otpCode = fmt.Sprintf("%06d", n.Int64()+100000)
+	// Generate a cryptographically random 6-digit OTP (100000 - 999999).
+	n, err := rand.Int(rand.Reader, big.NewInt(900000))
+	if err != nil {
+		sendJSONError(w, http.StatusInternalServerError, "generating verification code: "+err.Error())
+		return
 	}
+	otpCode := fmt.Sprintf("%06d", n.Int64()+100000)
 
 	now := time.Now().UTC()
 	expiresAt := now.Add(15 * time.Minute)
@@ -307,24 +303,81 @@ func (h *OrchestratorHandler) MakerSendOTP(w http.ResponseWriter, r *http.Reques
 			verified = 0,
 			expires_at = excluded.expires_at;
 	`
-	_, err := h.db.ExecContext(r.Context(), query, cleanPhone, creatorName, otpCode, initialToken, now, expiresAt)
+	_, err = h.db.ExecContext(r.Context(), query, cleanPhone, creatorName, otpCode, initialToken, now, expiresAt)
 	if err != nil {
 		sendJSONError(w, http.StatusInternalServerError, "saving creator session: "+err.Error())
 		return
 	}
 
+	// Dispatch via Meta WhatsApp Business Cloud API if configured
+	dispatchWhatsAppOTP(cleanPhone, otpCode, creatorName)
+
 	resp := models.SendOTPResponse{
 		Success: true,
-		Message: fmt.Sprintf("6-digit verification code sent to %s", cleanPhone),
+		Message: fmt.Sprintf("6-digit WhatsApp verification code dispatched to %s", cleanPhone),
 	}
-	// The code is only echoed back outside production so that local developers can
-	// complete the Maker flow without an SMS gateway. Production never leaks it.
 	if !h.isProduction() {
 		resp.DevOTP = otpCode
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// dispatchWhatsAppOTP delivers a 6-digit verification code to the creator's WhatsApp
+// using the Meta WhatsApp Business Cloud API.
+func dispatchWhatsAppOTP(phone, otpCode, creatorName string) {
+	token := strings.TrimSpace(os.Getenv("WHATSAPP_API_TOKEN"))
+	phoneNumberID := strings.TrimSpace(os.Getenv("WHATSAPP_PHONE_NUMBER_ID"))
+	if token == "" || phoneNumberID == "" {
+		log.Printf("[WhatsApp OTP] Notice: WHATSAPP_API_TOKEN or WHATSAPP_PHONE_NUMBER_ID not set. Stored OTP %s for %s in database.\n", otpCode, phone)
+		return
+	}
+
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, phone)
+	if len(digits) == 10 {
+		digits = "91" + digits
+	}
+
+	url := fmt.Sprintf("https://graph.facebook.com/v21.0/%s/messages", phoneNumberID)
+	payload := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
+		"to":                digits,
+		"type":              "text",
+		"text": map[string]interface{}{
+			"preview_url": false,
+			"body": fmt.Sprintf("*NexaCampus SchoolMaker Verification*\n\nHello %s,\n\nYour 6-digit WhatsApp verification code is: *%s*\n\nValid for 10 minutes. Do not share this code.", creatorName, otpCode),
+		},
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[WhatsApp OTP] Error serializing payload: %v\n", err)
+		return
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		log.Printf("[WhatsApp OTP] Error creating request: %v\n", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[WhatsApp OTP] Error sending WhatsApp message: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("[WhatsApp OTP] Dispatched WhatsApp message to %s, status: %d\n", digits, resp.StatusCode)
 }
 
 // MakerValidateCreatorToken handles POST /api/v1/maker/auth/validate-token.

@@ -47,10 +47,10 @@ type ProvisionedDomains struct {
 // <slug>.<appBaseDomain>. An empty value falls back to school-webapp-self.vercel.app.
 func NewDomainService(token, projectID, teamID, baseDomain, appBaseDomain string) *DomainService {
 	if baseDomain == "" {
-		baseDomain = "nexacampus.tech"
+		baseDomain = "nexacampus.school"
 	}
 	if appBaseDomain == "" {
-		appBaseDomain = "school-webapp-self.vercel.app"
+		appBaseDomain = "nexacampus.school"
 	}
 	return &DomainService{
 		token:         strings.TrimSpace(token),

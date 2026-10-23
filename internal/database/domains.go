@@ -25,11 +25,11 @@ func ReconcileSchoolDomains(db *sql.DB, baseDomain, appBaseDomain string) (int, 
 
 	baseDomain = strings.ToLower(strings.TrimSpace(baseDomain))
 	if baseDomain == "" {
-		baseDomain = "nexacampus.tech"
+		baseDomain = "nexacampus.school"
 	}
 	appBaseDomain = strings.ToLower(strings.TrimSpace(appBaseDomain))
 	if appBaseDomain == "" {
-		appBaseDomain = "school-webapp-self.vercel.app"
+		appBaseDomain = "nexacampus.school"
 	}
 
 	rows, err := db.Query(`SELECT id, subdomain_slug, student_domain, admin_domain, vercel_fallback_domain FROM schools`)
